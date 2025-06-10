@@ -1,11 +1,23 @@
 # pxstatspyR
 
-This package provides a minimal R interface to the PxAPI used by Statistics Sweden.
-It mirrors a subset of the features available in the Python package `pxstatpy`.
+This package provides an R interface to the PxAPI used by Statistics Sweden.
+It mirrors a subset of the functionality available in the Python package
+`pxstatpy` and exposes a simple R6 based client.
 
 ## Example
 ```r
 library(pxstatspyR)
 api <- PxAPI$new("https://api.scb.se/pxweb/api/v2")
+
+# Fetch API configuration
 conf <- api$get_config()
+
+# Explore navigation
+root <- api$get_navigation_root()
+
+# Retrieve metadata for a table
+meta <- api$get_table_metadata("AM0110A1")
+
+# Download data in JSON-stat2 format
+dat <- api$get_table_data("AM0110A1")
 ```
