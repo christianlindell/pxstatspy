@@ -97,6 +97,34 @@ PxAPI <- R6::R6Class(
                      httr::add_headers(Authorization = paste("Bearer", self$api_key)))
       httr::stop_for_status(r)
       jsonlite::fromJSON(httr::content(r, "text", encoding = "UTF-8"))
+    },
+
+    #' @description
+    #' Download table data as a data.frame using JSON-stat2
+    #' @param table_id Table identifier.
+    #' @param value_codes Optional list of variable selections.
+    #' @param output_format_param Output format parameter controlling value format.
+    get_data_as_dataframe = function(table_id, value_codes = NULL,
+                                     output_format_param = OutputFormatParam["USE_TEXTS"]) {
+      endpoint <- paste0("/tables/", table_id, "/data")
+      url <- paste0(self$base_url, endpoint)
+
+      query <- list(outputFormat = "json-stat2",
+                    lang = self$language,
+                    outputFormatParams = output_format_param)
+
+      if (!is.null(value_codes)) {
+        for (nm in names(value_codes)) {
+          query[[paste0("valuecodes[", nm, "]")]] <- paste(value_codes[[nm]], collapse = ",")
+        }
+      }
+
+      r <- httr::GET(url, query = query,
+                     httr::add_headers(Authorization = paste("Bearer", self$api_key)))
+      httr::stop_for_status(r)
+      txt <- httr::content(r, "text", encoding = "UTF-8")
+      out <- rjstat::fromJSONstat(txt)
+      out[[1]]
     }
   )
 )

@@ -23,6 +23,9 @@ meta <- api$get_table_metadata("AM0110A1")
 # Download data in JSON-stat2 format
 dat <- api$get_table_data("AM0110A1")
 
+# Convenient helper returning a data.frame
+df <- api$get_data_as_dataframe("AM0110A1")
+
 # Enumerations
 OutputFormat
 OutputFormatParam
