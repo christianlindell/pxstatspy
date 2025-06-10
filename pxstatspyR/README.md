@@ -2,7 +2,9 @@
 
 This package provides an R interface to the PxAPI used by Statistics Sweden.
 It mirrors a subset of the functionality available in the Python package
-`pxstatpy` and exposes a simple R6 based client.
+`pxstatpy` and exposes a simple R6 based client.  Helper classes are provided
+for API rate limiting and for navigating the API structure in a stateful
+fashion.
 
 ## Example
 ```r
@@ -20,4 +22,8 @@ meta <- api$get_table_metadata("AM0110A1")
 
 # Download data in JSON-stat2 format
 dat <- api$get_table_data("AM0110A1")
+
+# Enumerations
+OutputFormat
+OutputFormatParam
 ```

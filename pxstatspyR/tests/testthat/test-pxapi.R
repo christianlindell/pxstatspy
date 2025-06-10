@@ -6,3 +6,12 @@ test_that("PxAPI instantiates and exposes methods", {
   expect_true(is.function(api$get_table_metadata))
   expect_true(is.function(api$get_table_data))
 })
+
+test_that("RateLimiter and NavigationExplorer instantiate", {
+  rl <- RateLimiter$new(2, 1)
+  expect_equal(rl$max_calls, 2)
+
+  api <- PxAPI$new("http://example.com/v2")
+  nav <- NavigationExplorer$new(api)
+  expect_true(inherits(nav, "NavigationExplorer"))
+})
