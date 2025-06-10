@@ -5,6 +5,7 @@ It mirrors a subset of the functionality available in the Python package
 `pxstatpy` and exposes a simple R6 based client.  Helper classes are provided
 for API rate limiting and for navigating the API structure in a stateful
 fashion. Only a portion of the original Python API has been translated so far.
+Selection helpers are included for working with wildcard expressions.
 
 ## Example
 ```r
@@ -32,4 +33,6 @@ tables <- api$find_tables_as_dataframe(query = "population")
 # Enumerations
 OutputFormat
 OutputFormatParam
+PxVariables
+get_matching_codes(c("TOP(5)", "2020"), all_codes)
 ```
