@@ -1,10 +1,10 @@
 Package: pxstatspyR
 Title: Lightweight R Wrapper for PxAPI
-Version: 0.0.3
+Version: 0.0.4
 Authors@R: person("Emanuel", "Raptis", role = c("aut", "cre"))
 Description: Provides a small R6 based client for Statistics Sweden's PxAPI. It mirrors a subset of the functionality of the pxstatpy Python package, allowing navigation and data retrieval.
 Depends: R (>= 3.5.0)
-Imports: httr, jsonlite, R6, rjstat
+Imports: httr, jsonlite, R6, rjstat, dplyr, tidyr
 License: MIT
 Encoding: UTF-8
 LazyData: true

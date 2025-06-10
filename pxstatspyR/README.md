@@ -24,7 +24,7 @@ meta <- api$get_table_metadata("AM0110A1")
 # Download data in JSON-stat2 format
 dat <- api$get_table_data("AM0110A1")
 
-# Convenient helper returning a data.frame
+# Convenient helper returning a tidy data.frame
 df <- api$get_data_as_dataframe("AM0110A1")
 
 # Search for tables and return a data.frame

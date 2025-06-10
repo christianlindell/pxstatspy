@@ -7,7 +7,7 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install required R packages
-RUN R -e "install.packages(c('httr', 'jsonlite', 'R6', 'rjstat'), repos='https://cloud.r-project.org')"
+RUN R -e "install.packages(c('httr', 'jsonlite', 'R6', 'rjstat', 'dplyr', 'tidyr'), repos='https://cloud.r-project.org')"
 
 # Pre-install Python dependencies used by the tests
 RUN pip3 install --no-cache-dir requests pandas

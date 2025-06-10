@@ -365,8 +365,54 @@ PxAPI <- R6::R6Class(
       jsonlite::fromJSON(txt, simplifyVector = FALSE)
     },
     process_jsonstat_to_df = function(data, output_format_param, clean_colnames) {
-      df <- rjstat::fromJSONstat(data)[[1]]
-      df
+      dims <- data$dimension
+      dim_ids <- unlist(data$id)
+      codes <- lapply(dims, function(d) names(d$category$index))
+      labels <- lapply(dims, function(d) unlist(d$category$label))
+
+      grid <- expand.grid(codes, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+      names(grid) <- dim_ids
+      grid$value <- unlist(data$value)
+
+      # Apply label formatting
+      if (identical(output_format_param, OutputFormatParam["USE_TEXTS"])) {
+        for (nm in dim_ids) {
+          grid[[nm]] <- labels[[nm]][match(grid[[nm]], codes[[nm]])]
+        }
+      } else if (identical(output_format_param, OutputFormatParam["USE_CODES_AND_TEXTS"])) {
+        for (nm in dim_ids) {
+          lab <- labels[[nm]][match(grid[[nm]], codes[[nm]])]
+          grid[[nm]] <- paste(grid[[nm]], lab, sep = " - ")
+        }
+      }
+
+      # Region dimension handling
+      if (PxVariables$REGION %in% dim_ids) {
+        region_id <- PxVariables$REGION
+        region_lab <- labels[[region_id]][match(grid[[region_id]], codes[[region_id]])]
+        grid <- dplyr::rename(grid, region_code = !!region_id)
+        grid$region <- region_lab
+        dim_ids[dim_ids == region_id] <- "region_code"
+      }
+
+      # Pivot on contents dimension
+      cont_dim <- dim_ids[grepl(PxVariables$CONTENTS, dim_ids)]
+      if (length(cont_dim) > 0) {
+        grid <- tidyr::pivot_wider(grid, names_from = cont_dim, values_from = "value")
+      }
+
+      if (clean_colnames) {
+        clean <- function(x) {
+          x <- tolower(x)
+          x <- gsub(" ", "_", x)
+          x <- chartr("åäö", "aao", x)
+          x <- gsub("[^a-z0-9_]+", "", x)
+          x <- gsub("_+", "_", x)
+          gsub("^_|_$", "", x)
+        }
+        names(grid) <- vapply(names(grid), clean, character(1))
+      }
+      grid
     }
   )
 )
