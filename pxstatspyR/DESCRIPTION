@@ -1,0 +1,10 @@
+Package: pxstatspyR
+Title: Minimal R Wrapper for PxAPI
+Version: 0.0.1
+Authors@R: person("Emanuel", "Raptis", role = c("aut", "cre"))
+Description: Provides a minimal R interface to Statistics Sweden's PxAPI, mirroring core functionality of the pxstatpy Python package.
+Depends: R (>= 3.5.0)
+Imports: httr, jsonlite, R6
+License: MIT
+Encoding: UTF-8
+LazyData: true
