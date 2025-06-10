@@ -93,23 +93,35 @@ PxAPI <- R6::R6Class(
     #' Download table data.
     #' @param table_id Table identifier.
     #' @param value_codes Optional list of variable selections.
+    #' @param code_lists Optional named list of codelist identifiers.
     #' @param output_format Desired output format ("json-stat2" by default).
     #' @param output_format_params Additional format parameters as character vector.
-    get_table_data = function(table_id, value_codes = NULL,
+    #' @param heading Optional vector of variables to place in the heading.
+    #' @param stub Optional vector of variables to place in the stub.
+    #' @return Parsed response list or list of chunks when request is split.
+    get_table_data = function(table_id, value_codes = NULL, code_lists = NULL,
                               output_format = "json-stat2",
-                              output_format_params = NULL) {
-      endpoint <- paste0("/tables/", table_id, "/data")
-      query <- list(outputFormat = output_format)
-      if (!is.null(output_format_params)) {
-        query$outputFormatParams <- paste(output_format_params, collapse = ",")
+                              output_format_params = NULL,
+                              heading = NULL, stub = NULL) {
+      cells <- private$calculate_cells(table_id, value_codes)
+      metadata_px <- self$get_table_by_id(table_id)
+      if (cells$total_cells <= self$max_data_cells) {
+        private$make_single_request(table_id, value_codes, code_lists,
+                                    output_format, output_format_params,
+                                    heading, stub)
+      } else {
+        meta_stat <- self$get_table_metadata(table_id, output_format = "json-stat2")
+        chunk_info <- private$get_chunk_variable(cells$values_per_var,
+                                                 metadata_px, value_codes)
+        chunk_var <- chunk_info[1]
+        chunks <- private$prepare_chunks(table_id, chunk_var,
+                                         value_codes, meta_stat)
+        lapply(chunks, function(vc) {
+          private$make_single_request(table_id, vc, code_lists,
+                                      output_format, output_format_params,
+                                      heading, stub)
+        })
       }
-      if (!is.null(value_codes)) {
-        for (nm in names(value_codes)) {
-          query[[paste0("valuecodes[", nm, "]")]] <- paste(value_codes[[nm]], collapse = ",")
-        }
-      }
-      txt <- self$make_request(endpoint, query)
-      jsonlite::fromJSON(txt)
     },
 
     #' @description
@@ -136,20 +148,22 @@ PxAPI <- R6::R6Class(
     #' @param value_codes Optional list of variable selections.
     #' @param output_format_param Output format parameter controlling value format.
     get_data_as_dataframe = function(table_id, value_codes = NULL,
-                                     output_format_param = OutputFormatParam["USE_TEXTS"]) {
-      endpoint <- paste0("/tables/", table_id, "/data")
-      query <- list(outputFormat = "json-stat2",
-                    outputFormatParams = output_format_param)
-      if (!is.null(value_codes)) {
-        for (nm in names(value_codes)) {
-          query[[paste0("valuecodes[", nm, "]")]] <- paste(value_codes[[nm]], collapse = ",")
-        }
+                                     output_format_param = OutputFormatParam["USE_TEXTS"],
+                                     region_type = NULL, clean_colnames = FALSE) {
+      res <- self$get_table_data(table_id, value_codes,
+                                output_format = "json-stat2",
+                                output_format_params = output_format_param)
+
+      chunks <- if (!is.null(res$version)) list(res) else res
+      dfs <- lapply(chunks, function(x)
+        private$process_jsonstat_to_df(x, output_format_param, clean_colnames))
+      df <- dplyr::bind_rows(dfs)
+
+      if (!is.null(region_type) && "region_code" %in% names(df)) {
+        if (region_type == "deso") df <- df[nchar(df$region_code) == 9, ]
+        else if (region_type == "regso") df <- df[nchar(df$region_code) == 7, ]
       }
-      txt <- self$make_request(endpoint, query)
-      out <- jsonlite::fromJSON(txt, simplifyVector = FALSE)
-      private$process_jsonstat_to_df(out,
-                                     output_format_param,
-                                     clean_colnames = FALSE)
+      df
     },
 
     #' @description
@@ -205,13 +219,28 @@ PxAPI <- R6::R6Class(
 
     #' @description
     #' Print available variables for a table
-    print_table_variables = function(table_id, max_values = 10) {
+    #' @param table_id Table identifier.
+    #' @param max_values Number of values to show ("*" for all).
+    #' @param variable_id Optional variable ID to show values for a single variable.
+    print_table_variables = function(table_id, max_values = 10, variable_id = NULL) {
       meta <- self$get_table_metadata(table_id)
-      if (is.null(meta$variables)) return(invisible(NULL))
-      for (var in meta$variables) {
+      vars <- meta$variables
+      if (!is.null(variable_id)) {
+        vars <- Filter(function(v) v$id == variable_id, vars)
+        if (length(vars) == 0) stop(sprintf("Variable '%s' not found", variable_id))
+      }
+      show_all <- identical(max_values, "*")
+      limit <- if (show_all) Inf else as.integer(max_values)
+      for (var in vars) {
         cat(sprintf("\n%s (%s):\n", var$label, var$id))
-        vals <- head(var$values$label, max_values)
-        cat(paste("  -", vals), sep = "\n")
+        n <- length(var$values$label)
+        idx <- seq_len(min(n, limit))
+        for (i in idx) {
+          cat(sprintf("  - %s (Code: %s)\n", var$values$label[i], var$values$code[i]))
+        }
+        if (!show_all && n > limit) {
+          cat(sprintf("... and %d more values\n", n - limit))
+        }
       }
     }
   ),

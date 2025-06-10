@@ -1,11 +1,13 @@
 # pxstatspyR
 
 This package provides an R interface to the PxAPI used by Statistics Sweden.
-It mirrors a subset of the functionality available in the Python package
+It mirrors most of the functionality available in the Python package
 `pxstatpy` and exposes a simple R6 based client.  Helper classes are provided
 for API rate limiting and for navigating the API structure in a stateful
-fashion. Only a portion of the original Python API has been translated so far.
-Selection helpers are included for working with wildcard expressions.
+fashion. Selection helpers are included for working with wildcard expressions.
+Large requests are automatically split into chunks when needed and the
+`get_data_as_dataframe()` helper can filter on region type and clean column
+names similar to the Python implementation.
 
 ## Example
 ```r

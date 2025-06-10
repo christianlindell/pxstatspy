@@ -11,6 +11,7 @@ test_that("PxAPI instantiates and exposes methods", {
   expect_true(is.function(api$find_tables_as_dataframe))
   expect_true(is.function(api$get_table_by_id))
   expect_true(is.function(api$print_table_variables))
+  expect_equal(names(formals(api$print_table_variables)), c("table_id", "max_values", "variable_id"))
 })
 
 test_that("RateLimiter and NavigationExplorer instantiate", {
