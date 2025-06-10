@@ -30,6 +30,10 @@ df <- api$get_data_as_dataframe("AM0110A1")
 # Search for tables and return a data.frame
 tables <- api$find_tables_as_dataframe(query = "population")
 
+# POST request example
+body <- list(query = list(list(code = "Region", selection = list(filter = "item", values = "01"))))
+dat2 <- api$get_table_data_post("AM0110A1", body)
+
 # Enumerations
 OutputFormat
 OutputFormatParam

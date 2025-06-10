@@ -18,6 +18,7 @@ PxAPI <- R6::R6Class(
     api_key = NULL,
     language = "en",
     rate_limiter = NULL,
+    max_data_cells = 150000,
 
     #' @description
     #' Create a new PxAPI instance.
@@ -30,13 +31,16 @@ PxAPI <- R6::R6Class(
       self$api_key  <- api_key
       self$language <- language
       self$rate_limiter <- RateLimiter$new(max_calls, time_window)
+      self$max_data_cells <- 150000
     },
 
     #' @description
-    #' Internal helper for making GET requests with rate limiting
+    #' Internal helper for making requests with rate limiting
     #' @param endpoint Endpoint path beginning with '/'
     #' @param query Named list of query parameters
-    make_request = function(endpoint, query = list()) {
+    #' @param method HTTP method (GET or POST)
+    #' @param body Optional request body for POST
+    make_request = function(endpoint, query = list(), method = "GET", body = NULL) {
       self$rate_limiter$wait_if_needed()
       url <- paste0(self$base_url, endpoint)
       query$lang <- self$language
@@ -44,7 +48,13 @@ PxAPI <- R6::R6Class(
       if (!is.null(self$api_key)) {
         headers$Authorization <- paste("Bearer", self$api_key)
       }
-      r <- httr::GET(url, query = query, httr::add_headers(.headers = headers))
+      verb <- toupper(method)
+      if (identical(verb, "GET")) {
+        r <- httr::GET(url, query = query, httr::add_headers(.headers = headers))
+      } else {
+        r <- httr::VERB(verb, url, query = query, body = body,
+                        encode = "json", httr::add_headers(.headers = headers))
+      }
       httr::stop_for_status(r)
       httr::content(r, "text", encoding = "UTF-8")
     },
@@ -103,6 +113,24 @@ PxAPI <- R6::R6Class(
     },
 
     #' @description
+    #' Download table data using POST method with a selection body.
+    #' @param table_id Table identifier.
+    #' @param selection Named list describing the selection body.
+    #' @param output_format Desired output format ("json-stat2" by default).
+    #' @param output_format_params Additional format parameters.
+    get_table_data_post = function(table_id, selection,
+                                   output_format = "json-stat2",
+                                   output_format_params = NULL) {
+      endpoint <- paste0("/tables/", table_id, "/data")
+      query <- list(outputFormat = output_format)
+      if (!is.null(output_format_params)) {
+        query$outputFormatParams <- paste(output_format_params, collapse = ",")
+      }
+      txt <- self$make_request(endpoint, query, method = "POST", body = selection)
+      jsonlite::fromJSON(txt)
+    },
+
+    #' @description
     #' Download table data as a data.frame using JSON-stat2
     #' @param table_id Table identifier.
     #' @param value_codes Optional list of variable selections.
@@ -118,8 +146,10 @@ PxAPI <- R6::R6Class(
         }
       }
       txt <- self$make_request(endpoint, query)
-      out <- rjstat::fromJSONstat(txt)
-      out[[1]]
+      out <- jsonlite::fromJSON(txt, simplifyVector = FALSE)
+      private$process_jsonstat_to_df(out,
+                                     output_format_param,
+                                     clean_colnames = FALSE)
     },
 
     #' @description
@@ -183,6 +213,160 @@ PxAPI <- R6::R6Class(
         vals <- head(var$values$label, max_values)
         cat(paste("  -", vals), sep = "\n")
       }
+    }
+  ),
+  private = list(
+    format_number = function(num) {
+      if (num >= 1e6) sprintf("%.1fM", num / 1e6)
+      else if (num >= 1e3) sprintf("%.1fK", num / 1e3)
+      else format(num, big.mark = ",", scientific = FALSE)
+    },
+    parse_selection_expression = function(expr, values) {
+      codes <- vapply(values, function(v) v$code, character(1))
+      expand_expression(expr, codes)
+    },
+    expand_selection_expressions = function(var_meta, codes) {
+      all_codes <- vapply(var_meta$values, function(v) v$code, character(1))
+      get_matching_codes(codes, all_codes)
+    },
+    count_values_for_code = function(var_meta, code) {
+      all_codes <- vapply(var_meta$values, function(v) v$code, character(1))
+      count_matching_values(code, all_codes)
+    },
+    matches_pattern = function(code, pattern) {
+      code %in% get_matching_codes(pattern, code)
+    },
+    extract_variable_metadata = function(metadata_stat) {
+      meta <- list()
+      for (id in metadata_stat$id) {
+        dim <- metadata_stat$dimension[[id]]
+        type <- PxVariables$TYPE_REGULAR
+        if (!is.null(metadata_stat$role)) {
+          if (id %in% metadata_stat$role$time) type <- PxVariables$TYPE_TIME
+          else if (id %in% metadata_stat$role$metric) type <- PxVariables$TYPE_CONTENTS
+          else if (id %in% metadata_stat$role$geo) type <- PxVariables$TYPE_GEOGRAPHICAL
+        } else {
+          id_l <- tolower(id)
+          if (id == PxVariables$TIME || id_l %in% tolower(PxVariables$TIME_ALTERNATIVES)) {
+            type <- PxVariables$TYPE_TIME
+          } else if (id == PxVariables$CONTENTS || id_l %in% tolower(PxVariables$CONTENTS_ALTERNATIVES)) {
+            type <- PxVariables$TYPE_CONTENTS
+          } else if (id == PxVariables$REGION || id_l %in% tolower(PxVariables$REGION_ALTERNATIVES)) {
+            type <- PxVariables$TYPE_GEOGRAPHICAL
+          }
+        }
+        elim <- FALSE
+        if (!is.null(dim$extension$elimination)) elim <- dim$extension$elimination
+        meta[[id]] <- list(id = id, type = type, elimination = elim)
+      }
+      meta
+    },
+    calculate_cells = function(table_id, value_codes = NULL, validate_max_cells = TRUE) {
+      if (is.null(value_codes)) value_codes <- list()
+      metadata <- self$get_table_metadata(table_id, output_format = "json-stat2")
+      var_meta <- private$extract_variable_metadata(metadata)
+      var_sizes <- as.list(setNames(metadata$size, metadata$id))
+      for (nm in names(value_codes)) {
+        if (is.null(var_meta[[nm]])) stop(sprintf("Invalid variable '%s' not found", nm))
+      }
+      values_per_var <- list()
+      total_cells <- 1
+      for (var in names(var_sizes)) {
+        full_size <- var_sizes[[var]]
+        if (!is.null(value_codes[[var]])) {
+          all_codes <- names(metadata$dimension[[var]]$category$index)
+          selected <- 0
+          for (pat in value_codes[[var]]) {
+            selected <- selected + count_matching_values(pat, all_codes)
+            if (pat == "*") {selected <- length(all_codes); break}
+          }
+          if (selected == 0) stop(sprintf("No matching values for variable '%s'", var))
+          values_per_var[[var]] <- selected
+        } else {
+          can_elim <- !is.null(var_meta[[var]]$elimination) && var_meta[[var]]$elimination
+          values_per_var[[var]] <- if (can_elim) 1 else full_size
+        }
+        total_cells <- total_cells * values_per_var[[var]]
+      }
+      if (validate_max_cells && total_cells > self$max_data_cells) {
+        stop(sprintf("Request would return %s cells which exceeds maximum of %s", private$format_number(total_cells), private$format_number(self$max_data_cells)))
+      }
+      list(total_cells = total_cells, values_per_var = values_per_var)
+    },
+    get_chunk_variable = function(cells_per_var, metadata_px, value_codes) {
+      var_meta <- setNames(metadata_px$variables, vapply(metadata_px$variables, `[[`, character(1), "id"))
+      non_chunkable <- character()
+      for (id in names(var_meta)) {
+        meta <- var_meta[[id]]
+        if (meta$type %in% c(PxVariables$TYPE_TIME, PxVariables$TYPE_CONTENTS)) non_chunkable <- c(non_chunkable, id)
+        if (!(id %in% names(value_codes)) && isTRUE(meta$elimination)) non_chunkable <- c(non_chunkable, id)
+        if (id %in% names(value_codes)) {
+          if (any(grepl("^(TOP|BOTTOM)", toupper(value_codes[[id]])))) non_chunkable <- c(non_chunkable, id)
+        }
+      }
+      candidates <- cells_per_var[setdiff(names(cells_per_var), non_chunkable)]
+      if (length(candidates) == 0) stop("Cannot chunk query - no suitable variables found for chunking")
+      order_idx <- order(
+        sapply(names(candidates), function(x) ifelse(var_meta[[x]]$type == PxVariables$TYPE_GEOGRAPHICAL, 1, 0)),
+        unlist(candidates),
+        names(candidates),
+        decreasing = TRUE
+      )
+      best <- names(candidates)[order_idx[1]]
+      c(best, candidates[[best]])
+    },
+    prepare_chunks = function(table_id, chunk_var, value_codes, metadata_stat) {
+      dimension <- metadata_stat$dimension[[chunk_var]]
+      all_codes <- names(dimension$category$index)
+      if (!is.null(value_codes[[chunk_var]])) {
+        all_values <- get_matching_codes(value_codes[[chunk_var]], all_codes)
+      } else {
+        all_values <- all_codes
+      }
+      cells_info <- private$calculate_cells(table_id, value_codes, FALSE)
+      cells_per_value <- cells_info$total_cells / length(all_values)
+      per_chunk <- max(1, as.integer(self$max_data_cells / cells_per_value))
+      chunks <- list()
+      i <- 1
+      while (i <= length(all_values)) {
+        vals <- all_values[i:min(length(all_values), i + per_chunk - 1)]
+        vc <- value_codes
+        vc[[chunk_var]] <- vals
+        chunks[[length(chunks)+1]] <- vc
+        i <- i + per_chunk
+      }
+      chunks
+    },
+    make_single_request = function(table_id, value_codes, code_lists = NULL,
+                                   output_format = "json-stat2",
+                                   output_format_params = NULL,
+                                   heading = NULL, stub = NULL) {
+      endpoint <- paste0("/tables/", table_id, "/data")
+      query <- list(outputFormat = output_format)
+      if (!is.null(output_format_params)) {
+        query$outputFormatParams <- paste(output_format_params, collapse = ",")
+      }
+      if (length(value_codes)) {
+        meta <- self$get_table_metadata(table_id, output_format = "json-stat2")
+        for (nm in names(value_codes)) {
+          all_codes <- names(meta$dimension[[nm]]$category$index)
+          expanded <- get_matching_codes(value_codes[[nm]], all_codes)
+          query[[paste0("valuecodes[", nm, "]")]] <- paste(expanded, collapse = ",")
+        }
+      }
+      if (!is.null(code_lists)) {
+        for (nm in names(code_lists)) {
+          query[[paste0("codelist[", nm, "]")]] <- code_lists[[nm]]
+        }
+      }
+      if (!is.null(heading)) query$heading <- paste(heading, collapse = ",")
+      if (!is.null(stub)) query$stub <- paste(stub, collapse = ",")
+      txt <- self$make_request(endpoint, query)
+      jsonlite::fromJSON(txt, simplifyVector = FALSE)
+    },
+    process_jsonstat_to_df = function(data, output_format_param, clean_colnames) {
+      df <- rjstat::fromJSONstat(data)[[1]]
+      df
     }
   )
 )
